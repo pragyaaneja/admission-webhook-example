@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-service
+  namespace: webhook-demo
+  labels:
+    app: webhook-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-service
+  template:
+    metadata:
+      labels:
+        app: webhook-service
+    spec:
+      serviceAccountName: wh-api
+      initContainers:
+      - name: webhook-init
+        image: docker.io/dmitsh/webhook-demo:0.1
+        imagePullPolicy: Always
+        command: ['/usr/local/bin/initc']
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /etc/webhook/certs
+        env:
+        - name: MUTATE_CONFIG
+          value: webhook-demo-config
+        - name: WEBHOOK_SERVICE
+          value: webhook-demo-service
+        - name: WEBHOOK_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+      containers:
+      - name: server
+        image: docker.io/dmitsh/webhook-demo:0.1
+        imagePullPolicy: Always
+        command: ['/usr/local/bin/webhook']
+        ports:
+        - name: webhook-api
+          containerPort: 8443
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /etc/webhook/certs
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-demo-service
+  namespace: webhook-demo
+spec:
+  selector:
+    app: webhook-service
+  ports:
+    - port: 443
+      targetPort: webhook-api

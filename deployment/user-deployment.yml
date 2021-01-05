@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-app
+  labels:
+    app: user-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-app
+  template:
+    metadata:
+      labels:
+        app: user-app
+    spec:
+      containers:
+      - name: user
+        image: busybox
+        command:
+          - sh
+          - "-c"
+          - "while : ; do echo ping; sleep 5; done"
+        imagePullPolicy: IfNotPresent
+      restartPolicy: Always
