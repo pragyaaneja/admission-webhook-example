@@ -1,0 +1,4 @@
+FROM alpine
+
+COPY initc   /usr/local/bin/initc
+COPY webhook /usr/local/bin/webhook

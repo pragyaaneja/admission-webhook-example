@@ -97,6 +97,8 @@ func main() {
 	flag.StringVar(&keyPath, "tls.key.path", "/etc/webhook/certs/tls.key", "TLS private key filepath")
 	flag.Parse()
 
+	log.Printf("Starting webhook server: [crt: %s] [key: %s]", certPath, keyPath)
+
 	mux := http.NewServeMux()
 	mux.Handle("/mutate", admitFuncHandler(applySecurityDefaults))
 	server := &http.Server{

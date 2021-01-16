@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "webhook-demo.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webhook-demo.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: webhook-api
+      port: {{ .Values.service.port }}
+      targetPort: webhook-api
+      protocol: TCP
+  selector:
+    {{- include "webhook-demo.selectorLabels" . | nindent 4 }}

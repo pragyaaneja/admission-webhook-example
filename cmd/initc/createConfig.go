@@ -26,7 +26,7 @@ func createMutationConfig(ctx context.Context, caCert []byte) error {
 			Name: mutationCfgName,
 		},
 		Webhooks: []admissionregistrationv1.MutatingWebhook{{
-			Name: "webhook-service.webhook-demo.svc",
+			Name: webhookService + "." + webhookNamespace + ".svc",
 			ClientConfig: admissionregistrationv1.WebhookClientConfig{
 				CABundle: caCert,
 				Service: &admissionregistrationv1.ServiceReference{
@@ -43,6 +43,15 @@ func createMutationConfig(ctx context.Context, caCert []byte) error {
 					Resources:   []string{"deployments", "pods"},
 				},
 			}},
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "kubernetes.io/cluster-service",
+						Operator: metav1.LabelSelectorOpNotIn,
+						Values:   []string{"true"},
+					},
+				},
+			},
 			FailurePolicy:           &fail,
 			SideEffects:             &none,
 			AdmissionReviewVersions: []string{"v1beta1", "v1"},

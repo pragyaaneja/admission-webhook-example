@@ -58,8 +58,8 @@ func createCert(certPath, keyPath string) ([]byte, error) {
 		DNSNames:     dnsNames,
 		SerialNumber: big.NewInt(1658),
 		Subject: pkix.Name{
-			CommonName:   commonName,
-			Organization: []string{"example.com"},
+			CommonName: commonName,
+			//Organization: []string{"example.com"},
 		},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().AddDate(1, 0, 0),
