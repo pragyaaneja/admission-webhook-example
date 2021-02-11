@@ -1,4 +1,4 @@
-DOCKER_REPO=docker.io/dmitsh
+DOCKER_REPO=docker.io/praneja
 DOCKER_IMAGE_VER=0.1
 DOCKER_IMAGE=webhook-demo:${DOCKER_IMAGE_VER}
 

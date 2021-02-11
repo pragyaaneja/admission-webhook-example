@@ -5,9 +5,9 @@
 replicaCount: 1
 
 image:
-  repository: docker.io/dmitsh/webhook-demo
+  repository: docker.io/praneja/webhook-demo
   tag: "0.1"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 imagePullSecrets: []
 nameOverride: ""

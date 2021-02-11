@@ -1,0 +1,28 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: webhook-demo-mutating-config
+  labels:
+    app: webhook-demo-mutating-config
+webhooks:
+  - name: webhook-demo.default.svc
+    clientConfig: 
+      {{ include "webhook-demo-ca" . }}
+      service:
+        name: webhook-demo
+        namespace: default
+        path: "/mutate"
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["pods", "deployments"]
+    namespaceSelector:
+      matchLabels:
+        mutateme: enabled
+      matchExpressions:
+      - key: "kubernetes.io/cluster-service"
+        operator: NotIn
+        values: ["true"]
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None

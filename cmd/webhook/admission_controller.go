@@ -1,155 +1,119 @@
-/*
-Copyright (c) 2019 StackRox Inc.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
+// Package mutate deals with AdmissionReview requests and responses, it takes in the request body and returns a readily converted JSON []byte that can be
+// returned from a http Handler w/o needing to further convert or modify it, it also makes testing Mutate() kind of easy w/o need for a fake http server, etc.
 package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"k8s.io/api/admission/v1beta1"
+
+	v1beta1 "k8s.io/api/admission/v1beta1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"log"
-	"net/http"
 )
 
-const (
-	jsonContentType = `application/json`
-)
+// Mutate mutates
+func Mutate(body []byte) ([]byte, error) {
+	// if verbose {
+	// 	log.Printf("recieved object: %s\n", string(body)) // untested section
+	// }
 
-var (
-	universalDeserializer = serializer.NewCodecFactory(runtime.NewScheme()).UniversalDeserializer()
-)
+	// unmarshal request into AdmissionReview struct
+	admReview := v1beta1.AdmissionReview{}
 
-// patchOperation is an operation of a JSON patch, see https://tools.ietf.org/html/rfc6902 .
-type patchOperation struct {
-	Op    string      `json:"op"`
-	Path  string      `json:"path"`
-	Value interface{} `json:"value,omitempty"`
-}
-
-// admitFunc is a callback for admission controller logic. Given an AdmissionRequest, it returns the sequence of patch
-// operations to be applied in case of success, or the error that will be shown when the operation is rejected.
-type admitFunc func(*v1beta1.AdmissionRequest) ([]patchOperation, error)
-
-// isKubeNamespace checks if the given namespace is a Kubernetes-owned namespace.
-func isKubeNamespace(ns string) bool {
-	return ns == metav1.NamespacePublic || ns == metav1.NamespaceSystem
-}
-
-// doServeAdmitFunc parses the HTTP request for an admission controller webhook, and -- in case of a well-formed
-// request -- delegates the admission control logic to the given admitFunc. The response body is then returned as raw
-// bytes.
-func doServeAdmitFunc(w http.ResponseWriter, r *http.Request, admit admitFunc) ([]byte, error) {
-	// Step 1: Request validation. Only handle POST requests with a body and json content type.
-
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return nil, fmt.Errorf("invalid method %s, only POST requests are allowed", r.Method)
+	if err := json.Unmarshal(body, &admReview); err != nil {
+		return nil, fmt.Errorf("unmarshaling request failed with %s", err)
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return nil, fmt.Errorf("could not read request body: %v", err)
+	admRequest := admReview.Request
+	admResponse := v1beta1.AdmissionResponse{}
+
+	var err error
+	var pod *corev1.Pod
+
+	responseBody := []byte{}
+
+	// get the Pod object and unmarshal it into its struct, if we cannot, we might as well stop here
+	if err := json.Unmarshal(admRequest.Object.Raw, &pod); err != nil {
+		return nil, fmt.Errorf("unable unmarshal pod json object %v", err)
 	}
 
-	if contentType := r.Header.Get("Content-Type"); contentType != jsonContentType {
-		w.WriteHeader(http.StatusBadRequest)
-		return nil, fmt.Errorf("unsupported content type %s, only %s is supported", contentType, jsonContentType)
-	}
+	// the actual mutation is done by a string in JSONPatch style, i.e. we don't _actually_ modify the object, but
+	// tell K8S how it should modifiy it
+	p := make([]map[string]interface{}, 0)
+	for i := range pod.Spec.Containers {
+		limitValOld := pod.Spec.Containers[i].Resources.Limits["kubernetes.azure.com/sgx_epc_mem_in_MiB"]
+		requestValOld := pod.Spec.Containers[i].Resources.Requests["kubernetes.azure.com/sgx_epc_mem_in_MiB"]
+		requestValNew := pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/epc"]
 
-	// Step 2: Parse the AdmissionReview request.
+		if !requestValNew.IsZero() {
+			// the deployed pod configuration has the new EPC resource name
+			pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/enclave"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/provision"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Limits["sgx.intel.com/enclave"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Limits["sgx.intel.com/provision"] = *resource.NewQuantity(1, resource.DecimalSI)
 
-	var admissionReviewReq v1beta1.AdmissionReview
+		} else if !requestValOld.IsZero() {
+			// the deployed pod configuration has the old EPC resource name
+			requestValInt, _ := requestValOld.AsInt64()
+			newRequestVal := resource.NewQuantity(requestValInt*1024*1024, resource.BinarySI)
+			pod.Spec.Containers[i].Resources.Requests = make(corev1.ResourceList)
+			pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/enclave"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/provision"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Requests["sgx.intel.com/epc"] = *newRequestVal
 
-	if _, _, err := universalDeserializer.Decode(body, nil, &admissionReviewReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return nil, fmt.Errorf("could not deserialize request: %v", err)
-	} else if admissionReviewReq.Request == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return nil, errors.New("malformed admission review: request is nil")
-	}
+			limitValInt, _ := limitValOld.AsInt64()
+			newLimitVal := resource.NewQuantity(limitValInt*1024*1024, resource.BinarySI)
+			pod.Spec.Containers[i].Resources.Limits = make(corev1.ResourceList)
+			pod.Spec.Containers[i].Resources.Limits["sgx.intel.com/enclave"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Limits["sgx.intel.com/provision"] = *resource.NewQuantity(1, resource.DecimalSI)
+			pod.Spec.Containers[i].Resources.Limits["sgx.intel.com/epc"] = *newLimitVal
 
-	// Step 3: Construct the AdmissionReview response.
-
-	admissionReviewResponse := v1beta1.AdmissionReview{
-		Response: &v1beta1.AdmissionResponse{
-			UID: admissionReviewReq.Request.UID,
-		},
-	}
-
-	var patchOps []patchOperation
-	// Apply the admit() function only for non-Kubernetes namespaces. For objects in Kubernetes namespaces, return
-	// an empty set of patch operations.
-	if !isKubeNamespace(admissionReviewReq.Request.Namespace) {
-		patchOps, err = admit(admissionReviewReq.Request)
-	}
-
-	if err != nil {
-		// If the handler returned an error, incorporate the error message into the response and deny the object
-		// creation.
-		admissionReviewResponse.Response.Allowed = false
-		admissionReviewResponse.Response.Result = &metav1.Status{
-			Message: err.Error(),
+		} else {
+			continue
 		}
-	} else {
-		// Otherwise, encode the patch operations to JSON and return a positive response.
-		patchBytes, err := json.Marshal(patchOps)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return nil, fmt.Errorf("could not marshal JSON patch: %v", err)
-		}
-		admissionReviewResponse.Response.Allowed = true
-		admissionReviewResponse.Response.Patch = patchBytes
+
 	}
 
-	// Return the AdmissionReview with a response as JSON.
-	bytes, err := json.Marshal(&admissionReviewResponse)
+	patch := make(map[string]interface{})
+	patch["op"] = "replace"
+	patch["path"] = "/spec/containers"
+	patch["value"] = pod.Spec.Containers
+
+	p = append(p, patch)
+	// log.Printf("patch resp: %v\n", p)
+
+	// set response options
+	admResponse.Allowed = true
+	admResponse.UID = admRequest.UID
+	pT := v1beta1.PatchTypeJSONPatch
+	admResponse.PatchType = &pT // it's annoying that this needs to be a pointer as you cannot give a pointer to a constant?
+
+	// parse the []map into JSON
+	marshalPatch, err := json.Marshal(p)
+	admResponse.Patch = []byte(marshalPatch)
+	// log.Printf("admission resp patch: %v\n", admResponse.Patch)
+
+	// Success
+	admResponse.Result = &metav1.Status{
+		Status: "Success",
+	}
+
+	admReview.Response = &admResponse
+	// back into JSON so we can return the finished AdmissionReview w/ Response directly
+	// w/o needing to convert things in the http handler
+	responseBody, err = json.Marshal(admReview)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling response: %v", err)
-	}
-	return bytes, nil
-}
-
-// serveAdmitFunc is a wrapper around doServeAdmitFunc that adds error handling and logging.
-func serveAdmitFunc(w http.ResponseWriter, r *http.Request, admit admitFunc) {
-	log.Print("Handling webhook request ...")
-
-	var writeErr error
-	if bytes, err := doServeAdmitFunc(w, r, admit); err != nil {
-		log.Printf("Error handling webhook request: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, writeErr = w.Write([]byte(err.Error()))
-	} else {
-		log.Print("Webhook request handled successfully")
-		_, writeErr = w.Write(bytes)
+		return nil, err // untested section
 	}
 
-	if writeErr != nil {
-		log.Printf("Could not write response: %v", writeErr)
-	}
+	// if verbose {
+	// 	log.Printf("resp: %s\n", string(responseBody)) // untested section
+	// }
+
+	return responseBody, nil
 }
 
-// admitFuncHandler takes an admitFunc and wraps it into a http.Handler by means of calling serveAdmitFunc.
-func admitFuncHandler(admit admitFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serveAdmitFunc(w, r, admit)
-	})
-}
+// func createResourceList() corev1.ResourceList {
+
+// }

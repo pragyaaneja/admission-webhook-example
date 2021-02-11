@@ -60,3 +60,23 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Generate certificates for custom-metrics api server 
+*/}}
+{{- define "webhook-demo-certs" -}}
+{{- $altNames := list ( printf "%s.%s" (include "webhook-demo.name" .) .Release.Namespace ) ( printf "%s.%s.svc" (include "webhook-demo.name" .) .Release.Namespace ) -}}
+{{- $ca := genCA "webhook-demo-ca" 365 -}}
+{{- $cert := genSignedCert ( include "webhook-demo.name" . ) nil $altNames 365 $ca -}}
+tls.crt: {{ $cert.Cert | b64enc }}
+tls.key: {{ $cert.Key | b64enc }}
+{{- end -}}
+
+{{/*
+Generate CaBundle for custom-metrics api server 
+*/}}
+{{- define "webhook-demo-ca" -}}
+{{- $altNames := list ( printf "%s.%s" (include "webhook-demo.name" .) .Release.Namespace ) ( printf "%s.%s.svc" (include "webhook-demo.name" .) .Release.Namespace ) -}}
+{{- $ca := genCA "webhook-demo-ca" 365 -}}
+caBundle: {{ b64enc $ca.Cert }}
+{{- end -}}
